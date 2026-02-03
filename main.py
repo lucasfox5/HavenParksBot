@@ -1,21 +1,19 @@
-# main.py
-# One-file Discord bot with whitelist + moderation (Python / discord.py)
+# main.py — Prefix command bot with whitelist + moderation + help
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 import json
 import os
 
 # ========= CONFIG =========
-TOKEN = os.getenv("TOKEN")        # Put your bot token in environment or .env
-GUILD_ID = int(os.getenv("GUILD_ID", "0"))  # Dev server ID for command sync (optional but recommended)
+TOKEN = os.getenv("TOKEN")
+PREFIX = "!"
 
 INTENTS = discord.Intents.default()
 INTENTS.members = True
 INTENTS.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=INTENTS)
+bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
 # ========= WHITELIST STORAGE =========
 WHITELIST_FILE = "whitelist.json"
@@ -50,229 +48,147 @@ def remove_whitelist(user_id: int) -> bool:
         return True
     return False
 
-# ========= WHITELIST CHECK DECORATOR =========
-def whitelisted_only():
-    async def predicate(interaction: discord.Interaction):
-        if not check_whitelist(interaction.user.id):
-            await interaction.response.send_message(
-                "❌ You are not whitelisted to use this bot.",
-                ephemeral=True
-            )
-            return False
-        return True
-    return app_commands.check(predicate)
+# ========= WHITELIST CHECK =========
+async def whitelist_check(ctx):
+    if not check_whitelist(ctx.author.id):
+        await ctx.reply("❌ You are not whitelisted to use this bot.")
+        return False
+    return True
 
 # ========= EVENTS =========
 @bot.event
 async def on_ready():
-    print(f"{bot.user} is online.")
+    print(f"{bot.user} is online with prefix {PREFIX}")
 
-    # Sync commands to a specific guild (fast updates)
-    if GUILD_ID != 0:
-        guild = discord.Object(id=GUILD_ID)
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-        print(f"Commands synced to guild {GUILD_ID}.")
-    else:
-        # Global sync (slower to update)
-        await bot.tree.sync()
-        print("Commands synced globally.")
+# ========= HELP COMMAND =========
+@bot.command()
+async def help(ctx):
+    if not await whitelist_check(ctx): return
 
-# ========= SLASH COMMANDS =========
+    commands_list = """
+📜 **Available Commands**
 
-# /whitelist
-@bot.tree.command(name="whitelist", description="Manage bot whitelist")
-@app_commands.describe(
-    action="add/remove/list",
-    user="User to add/remove (not needed for list)"
-)
-@app_commands.choices(action=[
-    app_commands.Choice(name="add", value="add"),
-    app_commands.Choice(name="remove", value="remove"),
-    app_commands.Choice(name="list", value="list")
-])
-async def whitelist_cmd(
-    interaction: discord.Interaction,
-    action: app_commands.Choice[str],
-    user: discord.User | None = None
-):
-    # Only whitelisted users can manage whitelist
-    if not check_whitelist(interaction.user.id):
-        await interaction.response.send_message(
-            "❌ You are not allowed to manage the whitelist.",
-            ephemeral=True
-        )
-        return
+**Whitelist**
+!whitelist add @user  
+!whitelist remove @user  
+!whitelist list  
 
-    if action.value in ("add", "remove") and user is None:
-        await interaction.response.send_message(
-            "❌ You must specify a user for add/remove.",
-            ephemeral=True
-        )
-        return
+**Moderation**
+!ban @user [reason]  
+!kick @user [reason]  
+!timeout @user <minutes> [reason]  
+!purge <amount>  
 
-    if action.value == "add":
+**Utility**
+!ping  
+!help  
+"""
+
+    await ctx.reply(commands_list)
+
+# ========= WHITELIST COMMAND =========
+@bot.command()
+async def whitelist(ctx, action=None, user: discord.User=None):
+    if not await whitelist_check(ctx): return
+
+    if action == "add":
+        if user is None:
+            return await ctx.reply("❌ You must mention a user.")
         added = add_whitelist(user.id)
-        msg = (
-            f"✅ **{user}** has been added to the whitelist."
-            if added else
-            f"⚠️ **{user}** is already whitelisted."
-        )
-        await interaction.response.send_message(msg)
+        msg = f"✅ {user} added to whitelist." if added else f"⚠️ {user} already whitelisted."
+        return await ctx.reply(msg)
 
-    elif action.value == "remove":
+    elif action == "remove":
+        if user is None:
+            return await ctx.reply("❌ You must mention a user.")
         removed = remove_whitelist(user.id)
-        msg = (
-            f"🗑️ **{user}** has been removed from the whitelist."
-            if removed else
-            f"⚠️ **{user}** is not whitelisted."
-        )
-        await interaction.response.send_message(msg)
+        msg = f"🗑️ {user} removed from whitelist." if removed else f"⚠️ {user} not in whitelist."
+        return await ctx.reply(msg)
 
-    elif action.value == "list":
+    elif action == "list":
         users = whitelist_data["users"]
         if not users:
-            await interaction.response.send_message("📭 Whitelist is empty.")
-            return
-        mention_list = "\n".join(f"<@{uid}>" for uid in users)
-        await interaction.response.send_message(f"📜 **Whitelisted Users:**\n{mention_list}")
+            return await ctx.reply("📭 Whitelist is empty.")
+        mentions = "\n".join(f"<@{uid}>" for uid in users)
+        return await ctx.reply(f"📜 **Whitelisted Users:**\n{mentions}")
 
-# /ping
-@bot.tree.command(name="ping", description="Check bot latency")
-@whitelisted_only()
-async def ping(interaction: discord.Interaction):
-    latency = round(bot.latency * 1000)
-    await interaction.response.send_message(f"🏓 Pong! Latency: {latency}ms")
+    else:
+        await ctx.reply("Usage: !whitelist add/remove/list @user")
 
-# /ban
-@bot.tree.command(name="ban", description="Ban a member")
-@whitelisted_only()
-@app_commands.describe(user="User to ban", reason="Reason for ban")
-async def ban(
-    interaction: discord.Interaction,
-    user: discord.User,
-    reason: str | None = None
-):
-    if not interaction.user.guild_permissions.ban_members:
-        await interaction.response.send_message(
-            "❌ You lack **Ban Members** permission.",
-            ephemeral=True
-        )
-        return
+# ========= PING =========
+@bot.command()
+async def ping(ctx):
+    if not await whitelist_check(ctx): return
+    await ctx.reply(f"🏓 Pong! {round(bot.latency * 1000)}ms")
 
-    member = interaction.guild.get_member(user.id)
+# ========= BAN =========
+@bot.command()
+async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.ban_members:
+        return await ctx.reply("❌ You lack **Ban Members** permission.")
+
+    if user is None:
+        return await ctx.reply("❌ You must mention a user.")
+
+    member = ctx.guild.get_member(user.id)
     if member is None:
-        await interaction.response.send_message("❌ Could not find that member.")
-        return
+        return await ctx.reply("❌ User not found.")
 
-    try:
-        await member.ban(reason=reason or "No reason provided")
-        await interaction.response.send_message(
-            f"🔨 Banned **{user}** | Reason: {reason or 'No reason provided'}"
-        )
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to ban: `{e}`", ephemeral=True)
+    await member.ban(reason=reason)
+    await ctx.reply(f"🔨 Banned **{user}** | Reason: {reason}")
 
-# /kick
-@bot.tree.command(name="kick", description="Kick a member")
-@whitelisted_only()
-@app_commands.describe(user="User to kick", reason="Reason for kick")
-async def kick(
-    interaction: discord.Interaction,
-    user: discord.User,
-    reason: str | None = None
-):
-    if not interaction.user.guild_permissions.kick_members:
-        await interaction.response.send_message(
-            "❌ You lack **Kick Members** permission.",
-            ephemeral=True
-        )
-        return
+# ========= KICK =========
+@bot.command()
+async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.kick_members:
+        return await ctx.reply("❌ You lack **Kick Members** permission.")
 
-    member = interaction.guild.get_member(user.id)
+    if user is None:
+        return await ctx.reply("❌ You must mention a user.")
+
+    member = ctx.guild.get_member(user.id)
     if member is None:
-        await interaction.response.send_message("❌ Could not find that member.")
-        return
+        return await ctx.reply("❌ User not found.")
 
-    try:
-        await member.kick(reason=reason or "No reason provided")
-        await interaction.response.send_message(
-            f"👢 Kicked **{user}** | Reason: {reason or 'No reason provided'}"
-        )
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to kick: `{e}`", ephemeral=True)
+    await member.kick(reason=reason)
+    await ctx.reply(f"👢 Kicked **{user}** | Reason: {reason}")
 
-# /timeout
-@bot.tree.command(name="timeout", description="Timeout a member (in minutes)")
-@whitelisted_only()
-@app_commands.describe(
-    user="User to timeout",
-    minutes="Duration in minutes",
-    reason="Reason for timeout"
-)
-async def timeout(
-    interaction: discord.Interaction,
-    user: discord.User,
-    minutes: int,
-    reason: str | None = None
-):
-    if not interaction.user.guild_permissions.moderate_members:
-        await interaction.response.send_message(
-            "❌ You lack **Timeout Members** permission.",
-            ephemeral=True
-        )
-        return
+# ========= TIMEOUT =========
+@bot.command()
+async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.moderate_members:
+        return await ctx.reply("❌ You lack **Timeout Members** permission.")
 
-    member = interaction.guild.get_member(user.id)
+    if user is None or minutes is None:
+        return await ctx.reply("Usage: !timeout @user <minutes> [reason]")
+
+    member = ctx.guild.get_member(user.id)
     if member is None:
-        await interaction.response.send_message("❌ Could not find that member.")
-        return
+        return await ctx.reply("❌ User not found.")
 
     duration = discord.utils.utcnow() + discord.timedelta(minutes=minutes)
+    await member.edit(timeout=duration, reason=reason)
+    await ctx.reply(f"⏱️ Timed out **{user}** for **{minutes}** minutes | Reason: {reason}")
 
-    try:
-        await member.edit(timeout=duration, reason=reason or "No reason provided")
-        await interaction.response.send_message(
-            f"⏱️ Timed out **{user}** for **{minutes}** minutes | Reason: {reason or 'No reason provided'}"
-        )
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to timeout: `{e}`", ephemeral=True)
+# ========= PURGE =========
+@bot.command()
+async def purge(ctx, amount: int=None):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.manage_messages:
+        return await ctx.reply("❌ You lack **Manage Messages** permission.")
 
-# /purge
-@bot.tree.command(name="purge", description="Delete a number of messages")
-@whitelisted_only()
-@app_commands.describe(amount="Number of messages to delete (1-100)")
-async def purge(
-    interaction: discord.Interaction,
-    amount: int
-):
-    if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message(
-            "❌ You lack **Manage Messages** permission.",
-            ephemeral=True
-        )
-        return
+    if amount is None or amount < 1 or amount > 100:
+        return await ctx.reply("❌ Amount must be between 1 and 100.")
 
-    if amount < 1 or amount > 100:
-        await interaction.response.send_message(
-            "❌ Amount must be between 1 and 100.",
-            ephemeral=True
-        )
-        return
-
-    channel = interaction.channel
-    try:
-        deleted = await channel.purge(limit=amount)
-        await interaction.response.send_message(
-            f"🧹 Deleted **{len(deleted)}** messages.",
-            ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to delete messages: `{e}`", ephemeral=True)
+    deleted = await ctx.channel.purge(limit=amount)
+    await ctx.reply(f"🧹 Deleted **{len(deleted)}** messages.", delete_after=3)
 
 # ========= RUN =========
 if __name__ == "__main__":
     if not TOKEN:
-        print("Set TOKEN (and optionally GUILD_ID) as environment variables.")
+        print("Missing TOKEN environment variable.")
     else:
         bot.run(TOKEN)
