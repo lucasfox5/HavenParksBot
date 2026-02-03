@@ -1,4 +1,4 @@
-# main.py — Prefix command bot with whitelist + moderation + help
+# main.py — Prefix command bot with whitelist + admin bypass + moderation + help
 
 import discord
 from discord.ext import commands
@@ -15,7 +15,7 @@ INTENTS.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
-# REMOVE DEFAULT HELP (fixes your crash)
+# REMOVE DEFAULT HELP (fixes help command crash)
 bot.remove_command("help")
 
 # ========= WHITELIST STORAGE =========
@@ -53,10 +53,17 @@ def remove_whitelist(user_id: int) -> bool:
 
 # ========= WHITELIST CHECK =========
 async def whitelist_check(ctx):
-    if not check_whitelist(ctx.author.id):
-        await ctx.reply("❌ You are not whitelisted to use this bot.")
-        return False
-    return True
+    # Admins always allowed
+    if ctx.author.guild_permissions.administrator:
+        return True
+
+    # Whitelisted users allowed
+    if check_whitelist(ctx.author.id):
+        return True
+
+    # Everyone else blocked
+    await ctx.reply("❌ You are not whitelisted to use this bot.")
+    return False
 
 # ========= EVENTS =========
 @bot.event
@@ -66,7 +73,7 @@ async def on_ready():
 # ========= HELP COMMAND =========
 @bot.command()
 async def help(ctx):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
 
     commands_list = """
@@ -93,7 +100,7 @@ async def help(ctx):
 # ========= WHITELIST COMMAND =========
 @bot.command()
 async def whitelist(ctx, action=None, user: discord.User=None):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
 
     if action == "add":
@@ -123,14 +130,14 @@ async def whitelist(ctx, action=None, user: discord.User=None):
 # ========= PING =========
 @bot.command()
 async def ping(ctx):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
     await ctx.reply(f"🏓 Pong! {round(bot.latency * 1000)}ms")
 
 # ========= BAN =========
 @bot.command()
 async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
     if not ctx.author.guild_permissions.ban_members:
         return await ctx.reply("❌ You lack **Ban Members** permission.")
@@ -148,7 +155,7 @@ async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
 # ========= KICK =========
 @bot.command()
 async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
     if not ctx.author.guild_permissions.kick_members:
         return await ctx.reply("❌ You lack **Kick Members** permission.")
@@ -166,7 +173,7 @@ async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
 # ========= TIMEOUT =========
 @bot.command()
 async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
     if not ctx.author.guild_permissions.moderate_members:
         return await ctx.reply("❌ You lack **Timeout Members** permission.")
@@ -185,7 +192,7 @@ async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No
 # ========= PURGE =========
 @bot.command()
 async def purge(ctx, amount: int=None):
-    if not await whitelist_check(ctx): 
+    if not await whitelist_check(ctx):
         return
     if not ctx.author.guild_permissions.manage_messages:
         return await ctx.reply("❌ You lack **Manage Messages** permission.")
