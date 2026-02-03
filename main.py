@@ -15,6 +15,9 @@ INTENTS.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
+# REMOVE DEFAULT HELP (fixes your crash)
+bot.remove_command("help")
+
 # ========= WHITELIST STORAGE =========
 WHITELIST_FILE = "whitelist.json"
 
@@ -63,7 +66,8 @@ async def on_ready():
 # ========= HELP COMMAND =========
 @bot.command()
 async def help(ctx):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
 
     commands_list = """
 📜 **Available Commands**
@@ -89,7 +93,8 @@ async def help(ctx):
 # ========= WHITELIST COMMAND =========
 @bot.command()
 async def whitelist(ctx, action=None, user: discord.User=None):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
 
     if action == "add":
         if user is None:
@@ -118,13 +123,15 @@ async def whitelist(ctx, action=None, user: discord.User=None):
 # ========= PING =========
 @bot.command()
 async def ping(ctx):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
     await ctx.reply(f"🏓 Pong! {round(bot.latency * 1000)}ms")
 
 # ========= BAN =========
 @bot.command()
 async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
     if not ctx.author.guild_permissions.ban_members:
         return await ctx.reply("❌ You lack **Ban Members** permission.")
 
@@ -141,7 +148,8 @@ async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
 # ========= KICK =========
 @bot.command()
 async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
     if not ctx.author.guild_permissions.kick_members:
         return await ctx.reply("❌ You lack **Kick Members** permission.")
 
@@ -158,7 +166,8 @@ async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
 # ========= TIMEOUT =========
 @bot.command()
 async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No reason provided"):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
     if not ctx.author.guild_permissions.moderate_members:
         return await ctx.reply("❌ You lack **Timeout Members** permission.")
 
@@ -176,7 +185,8 @@ async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No
 # ========= PURGE =========
 @bot.command()
 async def purge(ctx, amount: int=None):
-    if not await whitelist_check(ctx): return
+    if not await whitelist_check(ctx): 
+        return
     if not ctx.author.guild_permissions.manage_messages:
         return await ctx.reply("❌ You lack **Manage Messages** permission.")
 
