@@ -1,301 +1,194 @@
-// bot.js
-// One-file Discord bot with whitelist + moderation
+# main.py — Prefix command bot with whitelist + moderation + help
 
-const { 
-    Client, 
-    GatewayIntentBits, 
-    Partials, 
-    Collection, 
-    SlashCommandBuilder, 
-    REST, 
-    Routes 
-} = require('discord.js');
-const fs = require('fs');
-require('dotenv').config();
+import discord
+from discord.ext import commands
+import json
+import os
 
-// ====== CONFIG ======
-const TOKEN = process.env.TOKEN;          // Put your bot token in .env as TOKEN=...
-const CLIENT_ID = process.env.CLIENT_ID;  // Your bot's application ID
-const GUILD_ID = process.env.GUILD_ID;    // Dev server ID for registering commands
+# ========= CONFIG =========
+TOKEN = os.getenv("TOKEN")
+PREFIX = "!"
 
-// ====== WHITELIST STORAGE ======
-const whitelistPath = './whitelist.json';
-if (!fs.existsSync(whitelistPath)) {
-    fs.writeFileSync(whitelistPath, JSON.stringify({ users: [] }, null, 4));
-}
-let whitelist = JSON.parse(fs.readFileSync(whitelistPath));
+INTENTS = discord.Intents.default()
+INTENTS.members = True
+INTENTS.message_content = True
 
-function saveWhitelist() {
-    fs.writeFileSync(whitelistPath, JSON.stringify(whitelist, null, 4));
-}
+bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
-function checkWhitelist(userId) {
-    return whitelist.users.includes(userId);
-}
+# ========= WHITELIST STORAGE =========
+WHITELIST_FILE = "whitelist.json"
 
-function addWhitelist(userId) {
-    if (!whitelist.users.includes(userId)) {
-        whitelist.users.push(userId);
-        saveWhitelist();
-        return true;
-    }
-    return false;
-}
+if not os.path.exists(WHITELIST_FILE):
+    with open(WHITELIST_FILE, "w") as f:
+        json.dump({"users": []}, f, indent=4)
 
-function removeWhitelist(userId) {
-    if (whitelist.users.includes(userId)) {
-        whitelist.users = whitelist.users.filter(id => id !== userId);
-        saveWhitelist();
-        return true;
-    }
-    return false;
-}
+with open(WHITELIST_FILE, "r") as f:
+    whitelist_data = json.load(f)
 
-// ====== CLIENT SETUP ======
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ],
-    partials: [Partials.Channel]
-});
+def save_whitelist():
+    with open(WHITELIST_FILE, "w") as f:
+        json.dump(whitelist_data, f, indent=4)
 
-client.commands = new Collection();
+def check_whitelist(user_id: int) -> bool:
+    return str(user_id) in whitelist_data["users"]
 
-// ====== COMMAND DEFINITIONS ======
-const commands = [];
+def add_whitelist(user_id: int) -> bool:
+    uid = str(user_id)
+    if uid not in whitelist_data["users"]:
+        whitelist_data["users"].append(uid)
+        save_whitelist()
+        return True
+    return False
 
-// /whitelist
-const whitelistCommand = new SlashCommandBuilder()
-    .setName('whitelist')
-    .setDescription('Manage bot whitelist')
-    .addSubcommand(sub =>
-        sub.setName('add')
-            .setDescription('Add a user to whitelist')
-            .addUserOption(opt => opt.setName('user').setDescription('User').setRequired(true))
-    )
-    .addSubcommand(sub =>
-        sub.setName('remove')
-            .setDescription('Remove a user from whitelist')
-            .addUserOption(opt => opt.setName('user').setDescription('User').setRequired(true))
-    )
-    .addSubcommand(sub =>
-        sub.setName('list')
-            .setDescription('Show all whitelisted users')
-    );
+def remove_whitelist(user_id: int) -> bool:
+    uid = str(user_id)
+    if uid in whitelist_data["users"]:
+        whitelist_data["users"].remove(uid)
+        save_whitelist()
+        return True
+    return False
 
-// /ban
-const banCommand = new SlashCommandBuilder()
-    .setName('ban')
-    .setDescription('Ban a member')
-    .addUserOption(opt => opt.setName('user').setDescription('User to ban').setRequired(true))
-    .addStringOption(opt => opt.setName('reason').setDescription('Reason').setRequired(false));
+# ========= WHITELIST CHECK =========
+async def whitelist_check(ctx):
+    if not check_whitelist(ctx.author.id):
+        await ctx.reply("❌ You are not whitelisted to use this bot.")
+        return False
+    return True
 
-// /kick
-const kickCommand = new SlashCommandBuilder()
-    .setName('kick')
-    .setDescription('Kick a member')
-    .addUserOption(opt => opt.setName('user').setDescription('User to kick').setRequired(true))
-    .addStringOption(opt => opt.setName('reason').setDescription('Reason').setRequired(false));
+# ========= EVENTS =========
+@bot.event
+async def on_ready():
+    print(f"{bot.user} is online with prefix {PREFIX}")
 
-// /timeout
-const timeoutCommand = new SlashCommandBuilder()
-    .setName('timeout')
-    .setDescription('Timeout a member (in minutes)')
-    .addUserOption(opt => opt.setName('user').setDescription('User to timeout').setRequired(true))
-    .addIntegerOption(opt => opt.setName('minutes').setDescription('Duration in minutes').setRequired(true))
-    .addStringOption(opt => opt.setName('reason').setDescription('Reason').setRequired(false));
+# ========= HELP COMMAND =========
+@bot.command()
+async def help(ctx):
+    if not await whitelist_check(ctx): return
 
-// /purge
-const purgeCommand = new SlashCommandBuilder()
-    .setName('purge')
-    .setDescription('Delete a number of messages')
-    .addIntegerOption(opt => opt.setName('amount').setDescription('1-100').setRequired(true));
+    commands_list = """
+📜 **Available Commands**
 
-// /ping
-const pingCommand = new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Check bot latency');
+**Whitelist**
+!whitelist add @user  
+!whitelist remove @user  
+!whitelist list  
 
-// Push to array for registration
-commands.push(
-    whitelistCommand,
-    banCommand,
-    kickCommand,
-    timeoutCommand,
-    purgeCommand,
-    pingCommand
-);
+**Moderation**
+!ban @user [reason]  
+!kick @user [reason]  
+!timeout @user <minutes> [reason]  
+!purge <amount>  
 
-// Map commands by name
-client.commands.set('whitelist', { data: whitelistCommand });
-client.commands.set('ban', { data: banCommand });
-client.commands.set('kick', { data: kickCommand });
-client.commands.set('timeout', { data: timeoutCommand });
-client.commands.set('purge', { data: purgeCommand });
-client.commands.set('ping', { data: pingCommand });
+**Utility**
+!ping  
+!help  
+"""
 
-// ====== REGISTER SLASH COMMANDS ======
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+    await ctx.reply(commands_list)
 
-async function registerCommands() {
-    try {
-        console.log('Registering application commands...');
-        await rest.put(
-            Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-            { body: commands.map(cmd => cmd.toJSON()) }
-        );
-        console.log('Commands registered.');
-    } catch (error) {
-        console.error('Error registering commands:', error);
-    }
-}
+# ========= WHITELIST COMMAND =========
+@bot.command()
+async def whitelist(ctx, action=None, user: discord.User=None):
+    if not await whitelist_check(ctx): return
 
-// ====== EVENT: READY ======
-client.once('ready', () => {
-    console.log(`${client.user.tag} is online.`);
-});
+    if action == "add":
+        if user is None:
+            return await ctx.reply("❌ You must mention a user.")
+        added = add_whitelist(user.id)
+        msg = f"✅ {user} added to whitelist." if added else f"⚠️ {user} already whitelisted."
+        return await ctx.reply(msg)
 
-// ====== EVENT: INTERACTION ======
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    elif action == "remove":
+        if user is None:
+            return await ctx.reply("❌ You must mention a user.")
+        removed = remove_whitelist(user.id)
+        msg = f"🗑️ {user} removed from whitelist." if removed else f"⚠️ {user} not in whitelist."
+        return await ctx.reply(msg)
 
-    const name = interaction.commandName;
+    elif action == "list":
+        users = whitelist_data["users"]
+        if not users:
+            return await ctx.reply("📭 Whitelist is empty.")
+        mentions = "\n".join(f"<@{uid}>" for uid in users)
+        return await ctx.reply(f"📜 **Whitelisted Users:**\n{mentions}")
 
-    // Whitelist check (except for whitelist command itself)
-    if (name !== 'whitelist' && !checkWhitelist(interaction.user.id)) {
-        return interaction.reply({
-            content: '❌ You are not whitelisted to use this bot.',
-            ephemeral: true
-        });
-    }
+    else:
+        await ctx.reply("Usage: !whitelist add/remove/list @user")
 
-    try {
-        // ====== WHITELIST COMMAND ======
-        if (name === 'whitelist') {
-            const sub = interaction.options.getSubcommand();
+# ========= PING =========
+@bot.command()
+async def ping(ctx):
+    if not await whitelist_check(ctx): return
+    await ctx.reply(f"🏓 Pong! {round(bot.latency * 1000)}ms")
 
-            // Only allow whitelisting by people already whitelisted (or you can hardcode your ID)
-            if (!checkWhitelist(interaction.user.id)) {
-                return interaction.reply({
-                    content: '❌ You are not allowed to manage the whitelist.',
-                    ephemeral: true
-                });
-            }
+# ========= BAN =========
+@bot.command()
+async def ban(ctx, user: discord.User=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.ban_members:
+        return await ctx.reply("❌ You lack **Ban Members** permission.")
 
-            if (sub === 'add') {
-                const user = interaction.options.getUser('user');
-                const added = addWhitelist(user.id);
-                return interaction.reply(
-                    added
-                        ? `✅ **${user.tag}** has been added to the whitelist.`
-                        : `⚠️ **${user.tag}** is already whitelisted.`
-                );
-            }
+    if user is None:
+        return await ctx.reply("❌ You must mention a user.")
 
-            if (sub === 'remove') {
-                const user = interaction.options.getUser('user');
-                const removed = removeWhitelist(user.id);
-                return interaction.reply(
-                    removed
-                        ? `🗑️ **${user.tag}** has been removed from the whitelist.`
-                        : `⚠️ **${user.tag}** is not whitelisted.`
-                );
-            }
+    member = ctx.guild.get_member(user.id)
+    if member is None:
+        return await ctx.reply("❌ User not found.")
 
-            if (sub === 'list') {
-                const list = whitelist.users;
-                if (list.length === 0) return interaction.reply('📭 Whitelist is empty.');
-                return interaction.reply(
-                    `📜 **Whitelisted Users:**\n${list.map(id => `<@${id}>`).join('\n')}`
-                );
-            }
-        }
+    await member.ban(reason=reason)
+    await ctx.reply(f"🔨 Banned **{user}** | Reason: {reason}")
 
-        // ====== PING ======
-        if (name === 'ping') {
-            return interaction.reply(`🏓 Pong! Latency: ${Date.now() - interaction.createdTimestamp}ms`);
-        }
+# ========= KICK =========
+@bot.command()
+async def kick(ctx, user: discord.User=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.kick_members:
+        return await ctx.reply("❌ You lack **Kick Members** permission.")
 
-        // ====== BAN ======
-        if (name === 'ban') {
-            if (!interaction.member.permissions.has('BanMembers')) {
-                return interaction.reply({ content: '❌ You lack **Ban Members** permission.', ephemeral: true });
-            }
+    if user is None:
+        return await ctx.reply("❌ You must mention a user.")
 
-            const user = interaction.options.getUser('user');
-            const reason = interaction.options.getString('reason') || 'No reason provided';
+    member = ctx.guild.get_member(user.id)
+    if member is None:
+        return await ctx.reply("❌ User not found.")
 
-            const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-            if (!member) return interaction.reply('❌ Could not find that member.');
+    await member.kick(reason=reason)
+    await ctx.reply(f"👢 Kicked **{user}** | Reason: {reason}")
 
-            await member.ban({ reason });
-            return interaction.reply(`🔨 Banned **${user.tag}** | Reason: ${reason}`);
-        }
+# ========= TIMEOUT =========
+@bot.command()
+async def timeout(ctx, user: discord.User=None, minutes: int=None, *, reason="No reason provided"):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.moderate_members:
+        return await ctx.reply("❌ You lack **Timeout Members** permission.")
 
-        // ====== KICK ======
-        if (name === 'kick') {
-            if (!interaction.member.permissions.has('KickMembers')) {
-                return interaction.reply({ content: '❌ You lack **Kick Members** permission.', ephemeral: true });
-            }
+    if user is None or minutes is None:
+        return await ctx.reply("Usage: !timeout @user <minutes> [reason]")
 
-            const user = interaction.options.getUser('user');
-            const reason = interaction.options.getString('reason') || 'No reason provided';
+    member = ctx.guild.get_member(user.id)
+    if member is None:
+        return await ctx.reply("❌ User not found.")
 
-            const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-            if (!member) return interaction.reply('❌ Could not find that member.');
+    duration = discord.utils.utcnow() + discord.timedelta(minutes=minutes)
+    await member.edit(timeout=duration, reason=reason)
+    await ctx.reply(f"⏱️ Timed out **{user}** for **{minutes}** minutes | Reason: {reason}")
 
-            await member.kick(reason);
-            return interaction.reply(`👢 Kicked **${user.tag}** | Reason: ${reason}`);
-        }
+# ========= PURGE =========
+@bot.command()
+async def purge(ctx, amount: int=None):
+    if not await whitelist_check(ctx): return
+    if not ctx.author.guild_permissions.manage_messages:
+        return await ctx.reply("❌ You lack **Manage Messages** permission.")
 
-        // ====== TIMEOUT ======
-        if (name === 'timeout') {
-            if (!interaction.member.permissions.has('ModerateMembers')) {
-                return interaction.reply({ content: '❌ You lack **Timeout Members** permission.', ephemeral: true });
-            }
+    if amount is None or amount < 1 or amount > 100:
+        return await ctx.reply("❌ Amount must be between 1 and 100.")
 
-            const user = interaction.options.getUser('user');
-            const minutes = interaction.options.getInteger('minutes');
-            const reason = interaction.options.getString('reason') || 'No reason provided';
+    deleted = await ctx.channel.purge(limit=amount)
+    await ctx.reply(f"🧹 Deleted **{len(deleted)}** messages.", delete_after=3)
 
-            const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-            if (!member) return interaction.reply('❌ Could not find that member.');
-
-            const ms = minutes * 60 * 1000;
-            await member.timeout(ms, reason);
-            return interaction.reply(`⏱️ Timed out **${user.tag}** for **${minutes}** minutes | Reason: ${reason}`);
-        }
-
-        // ====== PURGE ======
-        if (name === 'purge') {
-            if (!interaction.member.permissions.has('ManageMessages')) {
-                return interaction.reply({ content: '❌ You lack **Manage Messages** permission.', ephemeral: true });
-            }
-
-            const amount = interaction.options.getInteger('amount');
-            if (amount < 1 || amount > 100) {
-                return interaction.reply({ content: '❌ Amount must be between 1 and 100.', ephemeral: true });
-            }
-
-            const messages = await interaction.channel.bulkDelete(amount, true).catch(() => null);
-            if (!messages) return interaction.reply('❌ Failed to delete messages (messages may be too old).');
-
-            return interaction.reply(`🧹 Deleted **${messages.size}** messages.`);
-        }
-
-    } catch (error) {
-        console.error(error);
-        if (!interaction.replied) {
-            interaction.reply({ content: '❌ An error occurred while executing that command.', ephemeral: true });
-        }
-    }
-});
-
-// ====== START ======
-(async () => {
-    await registerCommands();
-    client.login(TOKEN);
-})();
+# ========= RUN =========
+if __name__ == "__main__":
+    if not TOKEN:
+        print("Missing TOKEN environment variable.")
+    else:
+        bot.run(TOKEN)
